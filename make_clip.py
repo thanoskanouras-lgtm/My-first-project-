@@ -199,22 +199,24 @@ def transcribe_words(path, start, duration, model_size):
     except ImportError:
         print("faster-whisper not installed; skipping captions.", file=sys.stderr)
         return []
-    tmp = path + ".clip.wav"
-    run(["ffmpeg", "-y", "-v", "error", "-ss", str(start), "-t", str(duration),
-         "-i", path, "-vn", "-ac", "1", "-ar", "16000", tmp])
+    import numpy as np
+    pcm = subprocess.run(
+        ["ffmpeg", "-v", "error", "-ss", str(start), "-t", str(duration), "-i", path,
+         "-vn", "-ac", "1", "-ar", "16000", "-f", "f32le", "-"],
+        check=True, capture_output=True).stdout
+    audio = np.frombuffer(pcm, dtype=np.float32)
     try:
         model = WhisperModel(model_size, device="cpu", compute_type="int8")
     except Exception as e:  # model download blocked, etc.
         print(f"Could not load whisper model ({e}); skipping captions.", file=sys.stderr)
         return []
-    segs, _ = model.transcribe(tmp, word_timestamps=True, vad_filter=True)
+    segs, _ = model.transcribe(audio, word_timestamps=True, vad_filter=True)
     words = []
     for s in segs:
         for w in s.words or []:
             txt = w.word.strip()
             if txt:
                 words.append((w.start, w.end, txt))
-    os.remove(tmp)
     return words
 
 
@@ -274,10 +276,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
 
 # ------------------------------------------------------------------------ render
-def render(src, start, duration, title_png, title_h, ass, out):
+def render(src, start, duration, title_png, title_h, ass, out, crop=None):
     title_y = max(40, TITLE_CENTER_Y - title_h // 2)
+    pre = f"crop={crop}," if crop else ""
     fc = (
-        f"[0:v]split=2[a][b];"
+        f"[0:v]{pre}split=2[a][b];"
         f"[a]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},"
         f"scale={W // 8}:{H // 8},gblur=sigma=6,scale={W}:{H},eq=brightness=-0.06[bg];"
         f"[b]scale={W}:{FG_H}:force_original_aspect_ratio=decrease,"
@@ -312,6 +315,8 @@ def main():
     ap.add_argument("--srt", help="use this SRT for captions instead of whisper")
     ap.add_argument("--no-captions", action="store_true")
     ap.add_argument("--whisper-model", default="small")
+    ap.add_argument("--crop", help="ffmpeg crop W:H:X:Y to cut the 16:9 stream out of "
+                    "a phone screen recording (removes black bars / UI)")
     ap.add_argument("-o", "--output", default="short.mp4")
     a = ap.parse_args()
 
@@ -333,7 +338,7 @@ def main():
             ass = os.path.join(work, "captions.ass")
             write_ass(words, ass)
 
-    render(src, start, a.duration, title_png, title_h, ass, a.output)
+    render(src, start, a.duration, title_png, title_h, ass, a.output, a.crop)
     print(json.dumps({"output": a.output, "start": start, "duration": a.duration,
                       "captions": bool(ass)}))
 
