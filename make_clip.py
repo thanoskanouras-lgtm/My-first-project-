@@ -165,6 +165,13 @@ def render_title(text, path, size=68, max_w=W - 120):
             cur = w_
     if cur:
         lines.append(cur)
+    # avoid an orphan like "6 😳" on the last line: pull the previous word down
+    if len(lines) > 1:
+        last_words = [w_ for w_ in lines[-1].split() if not EMOJI_RE.fullmatch(w_)]
+        prev = lines[-2].split()
+        if len(last_words) <= 1 and len(prev) > 1:
+            lines[-2] = " ".join(prev[:-1])
+            lines[-1] = prev[-1] + " " + lines[-1]
 
     line_h = int(size * 1.25)
     img = Image.new("RGBA", (W, line_h * len(lines) + 40), (0, 0, 0, 0))
