@@ -155,7 +155,13 @@ def _measure(text, font, emoji_px):
 def render_title(text, path, size=68, max_w=W - 120):
     font = _font(size)
     emoji_px = int(size * 1.05)
-    words, lines, cur = text.split(), [], ""
+    words, lines, cur = [], [], ""
+    for w_ in text.split():
+        # glue emoji-only tokens to the word before so they never wrap alone
+        if words and EMOJI_RE.fullmatch(w_):
+            words[-1] += " " + w_
+        else:
+            words.append(w_)
     for w_ in words:
         trial = (cur + " " + w_).strip()
         if _measure(trial, font, emoji_px) <= max_w or not cur:
@@ -169,6 +175,8 @@ def render_title(text, path, size=68, max_w=W - 120):
     if len(lines) > 1:
         last_words = [w_ for w_ in lines[-1].split() if not EMOJI_RE.fullmatch(w_)]
         prev = lines[-2].split()
+        if prev and EMOJI_RE.fullmatch(prev[-1]):
+            prev = prev[:-1]  # don't move a lone emoji; keep things simple
         if len(last_words) <= 1 and len(prev) > 1:
             lines[-2] = " ".join(prev[:-1])
             lines[-1] = prev[-1] + " " + lines[-1]
@@ -283,9 +291,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
 
 # ------------------------------------------------------------------------ render
-def render(src, start, duration, title_png, title_h, ass, out, crop=None):
+def render(src, start, duration, title_png, title_h, ass, out, crop=None, rotate=None):
     title_y = max(40, TITLE_CENTER_Y - title_h // 2)
-    pre = f"crop={crop}," if crop else ""
+    pre = {"ccw": "transpose=2,", "cw": "transpose=1,", None: ""}[rotate]
+    pre += f"crop={crop}," if crop else ""
     fc = (
         f"[0:v]{pre}split=2[a][b];"
         f"[a]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},"
@@ -324,6 +333,9 @@ def main():
     ap.add_argument("--whisper-model", default="small")
     ap.add_argument("--crop", help="ffmpeg crop W:H:X:Y to cut the 16:9 stream out of "
                     "a phone screen recording (removes black bars / UI)")
+    ap.add_argument("--rotate", choices=["cw", "ccw"],
+                    help="rotate 90° first, for landscape recordings saved sideways "
+                    "(applied before --crop)")
     ap.add_argument("-o", "--output", default="short.mp4")
     a = ap.parse_args()
 
@@ -345,7 +357,7 @@ def main():
             ass = os.path.join(work, "captions.ass")
             write_ass(words, ass)
 
-    render(src, start, a.duration, title_png, title_h, ass, a.output, a.crop)
+    render(src, start, a.duration, title_png, title_h, ass, a.output, a.crop, a.rotate)
     print(json.dumps({"output": a.output, "start": start, "duration": a.duration,
                       "captions": bool(ass)}))
 
