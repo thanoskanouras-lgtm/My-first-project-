@@ -291,9 +291,23 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
 
 # ------------------------------------------------------------------------ render
+# iPhone screen recordings are often HDR (PQ / HLG, BT.2020); without tone
+# mapping they come out grey and washed out in a normal SDR video.
+TONEMAP = ("zscale=t=linear:npl=203,format=gbrpf32le,zscale=p=bt709,"
+           "tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p")
+
+
+def is_hdr(path):
+    p = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0",
+                        "-show_entries", "stream=color_transfer", "-of", "csv=p=0",
+                        path], capture_output=True, text=True)
+    return p.stdout.strip().strip(",") in ("smpte2084", "arib-std-b67")
+
+
 def render(src, start, duration, title_png, title_h, ass, out, crop=None, rotate=None):
     title_y = max(40, TITLE_CENTER_Y - title_h // 2)
-    pre = {"ccw": "transpose=2,", "cw": "transpose=1,", None: ""}[rotate]
+    pre = TONEMAP + "," if is_hdr(src) else ""
+    pre += {"ccw": "transpose=2,", "cw": "transpose=1,", None: ""}[rotate]
     pre += f"crop={crop}," if crop else ""
     fc = (
         f"[0:v]{pre}split=2[a][b];"
